@@ -1,4 +1,4 @@
-import java.io.*;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -58,10 +58,12 @@ public class MyJob extends Configured implements Tool {
 	
 	// Mapper
 	public static class MapClass extends MapReduceBase implements
-			Mapper<IntWritable, Text, IntWritable, DoubleWritable> {
-		public void map(IntWritable key, Text value, OutputCollector<IntWritable, DoubleWritable> output, Reporter reporter)
+			Mapper<Text, Text, IntWritable, DoubleWritable> {
+		public void map(Text key, Text value, OutputCollector<IntWritable, DoubleWritable> output, Reporter reporter)
 				throws IOException {
-				User sim = users.get(key.get());
+			    int newKey = Integer.parseInt(key.toString());
+				User sim = findUserById(similarUsers, newKey);
+				if(sim!=null){
 				double intermed = 0;
 				try{
 				MoviesAndRatings marSim = getVotedItemsForUser(sim.getUserID(), timestamp);
@@ -69,7 +71,8 @@ public class MyJob extends Configured implements Tool {
 				}catch(SQLException ex){
 					System.out.println(ex.getMessage());
 				}
-			output.collect(key, new DoubleWritable(intermed));
+			output.collect(new IntWritable(newKey), new DoubleWritable(intermed));
+				}
 		}
 	}
 
@@ -100,6 +103,9 @@ public class MyJob extends Configured implements Tool {
 				currentMovieID = movie.getMovieId();
 				double prediction = getMeanVoteForUser(currentUser, votedItemsForUser);
 				Configuration conf = getConf();
+				conf.addResource(new Path("conf/core-site.xml"));
+				conf.addResource(new Path("conf/hdfs-site.xml"));
+				conf.reloadConfiguration();				
 				JobConf job = new JobConf(conf, MyJob.class);
 				Path in = new Path("/home/dragos/users.csv");
 				Path out = new Path("/home/dragos/myOutput");
@@ -110,8 +116,8 @@ public class MyJob extends Configured implements Tool {
 				job.setReducerClass(Reduce.class);
 				job.setInputFormat(KeyValueTextInputFormat.class);
 				job.setOutputFormat(TextOutputFormat.class);
-				job.setOutputKeyClass(Text.class);
-				job.setOutputValueClass(Text.class);
+				job.setOutputKeyClass(IntWritable.class);
+				job.setOutputValueClass(DoubleWritable.class);
 				job.set("key.value.separator.in.input.line", ",");
 				JobClient.runJob(job);
 				prediction += 1;
@@ -143,8 +149,6 @@ public class MyJob extends Configured implements Tool {
 
 	public static MoviesAndRatings getVotedItemsForUser(int userId, String theDay)
 			throws SQLException {
-		
-		System.out.println("getVotedItemsForUSer()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -152,8 +156,8 @@ public class MyJob extends Configured implements Tool {
 		ResultSet films = st
 				.executeQuery("SELECT Movies.movieID,Movies.title,Training.value,Training.created_at FROM Movies INNER JOIN Training ON Movies.movieID=Training.movieID WHERE Training.userID="
 						+ userId);
-		List<Movie> movies = new LinkedList<Movie>();
 		List<Movie> allRated = new LinkedList<Movie>();
+		List<Movie> allRatedAtTime = new LinkedList<Movie>();
 		List<Integer> ratings = new LinkedList<Integer>();
 		while (films.next()) {
 			int movieId = films.getInt("movieID");
@@ -161,7 +165,7 @@ public class MyJob extends Configured implements Tool {
 			String day = films.getString("created_at");
 			allRated.add(new Movie(movieId, title));
 			if (getDayOfWeek(day).equals(getDayOfWeek(theDay))) {
-				movies.add(new Movie(movieId, title));
+				allRatedAtTime.add(new Movie(movieId, title));
 				ratings.add(films.getInt("value"));
 			}
 		}
@@ -175,11 +179,10 @@ public class MyJob extends Configured implements Tool {
 		}
 		films.close();
 		st.close();
-		return new MoviesAndRatings(userId, movies, ratings, unrratedMovies);
+		return new MoviesAndRatings(userId, allRatedAtTime, ratings, unrratedMovies);
 	}
 
 	public static List<User> getUsers() throws SQLException {
-		System.out.println("getUsers()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -197,7 +200,6 @@ public class MyJob extends Configured implements Tool {
 	}
 
 	public static List<Movie> getMovies() throws SQLException {
-		System.out.println("getMovies()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -217,11 +219,11 @@ public class MyJob extends Configured implements Tool {
 	}
 
 	public static int getVoteOfUserForItem(int userId, int movieId,	MoviesAndRatings mar) {
-		List<Movie> movies = mar.getMovies();
+		List<Movie> votedmovies = mar.getMovies();
 		List<Integer> ratings = mar.getRatings();
-		for (int i = 0; i < movies.size(); i++) {
+		for (int i = 0; i < votedmovies.size(); i++) {
 			if (userId == mar.getUserId()
-					&& movies.get(i).getMovieId() == movieId)
+					&& votedmovies.get(i).getMovieId() == movieId)
 				return ratings.get(i);
 		}
 		return -1;
@@ -345,5 +347,12 @@ public class MyJob extends Configured implements Tool {
 			return "weekend";
 		else
 			return "weekday";
+	}
+	
+	public static User findUserById(List<User> theUsers,int theKey){
+		for(User u:theUsers){
+			if (u.getUserID()==theKey) return u;
+		}
+		return null;
 	}
 }

@@ -1,0 +1,30 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="configuration.xsl"?>
+
+<!-- Put site-specific property overrides in this file. -->
+
+<configuration>
+<property>
+<name>dfs.replication</name>
+<value>1</value>
+<description>The actual number of replications can be specified when the
+file is created.</description>
+</property>
+
+<property>
+  <name>dfs.namenode.plugins</name>
+  <value>org.apache.hadoop.thriftfs.NamenodePlugin</value>
+  <description>Comma-separated list of namenode plugins to be activated.
+  </description>
+</property>
+<property>
+  <name>dfs.datanode.plugins</name>
+  <value>org.apache.hadoop.thriftfs.DatanodePlugin</value>
+  <description>Comma-separated list of datanode plugins to be activated.
+  </description>
+</property>
+<property>
+  <name>dfs.thrift.address</name>
+  <value>0.0.0.0:10090</value>
+</property>
+</configuration>
