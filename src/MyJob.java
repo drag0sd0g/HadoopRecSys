@@ -25,13 +25,14 @@ public class MyJob extends Configured implements Tool {
 	private static List<User> similarUsers=null;
 	private static List<Movie> unrratedMovies = null;
 	private static MoviesAndRatings votedItemsForUser;
+	private static int currentMovieID;
 	
 	public MyJob(int userId, String datetime) {
 		currentUser = userId;
 		timestamp = datetime;
 		try {
 			String driver = "com.mysql.jdbc.Driver";
-			String connectionString = "jdbc:mysql://localhost:3306/MoviePilot";
+			String connectionString = "jdbc:mysql://localhost:3306/MyMoviePilot";
 			String username = "root";
 			String password = "admin";
 			conn = getConnection(driver, connectionString, username, password);
@@ -60,10 +61,14 @@ public class MyJob extends Configured implements Tool {
 			Mapper<IntWritable, Text, IntWritable, DoubleWritable> {
 		public void map(IntWritable key, Text value, OutputCollector<IntWritable, DoubleWritable> output, Reporter reporter)
 				throws IOException {
-				User sim = similarUsers.get(key.get());
+				User sim = users.get(key.get());
+				double intermed = 0;
+				try{
 				MoviesAndRatings marSim = getVotedItemsForUser(sim.getUserID(), timestamp);
-				double intermed = similarity(currentUser, sim.getUserID(),votedItemsForUser, marSim)*(getVoteOfUserForItem(sim.getUserID(),
-								movie.getMovieId(), marSim));
+				intermed = similarity(currentUser, sim.getUserID(),votedItemsForUser, marSim)*(getVoteOfUserForItem(sim.getUserID(),	currentMovieID, marSim));
+				}catch(SQLException ex){
+					System.out.println(ex.getMessage());
+				}
 			output.collect(key, new DoubleWritable(intermed));
 		}
 	}
@@ -90,8 +95,9 @@ public class MyJob extends Configured implements Tool {
 			unrratedMovies = votedItemsForUser.getUnratedMovies();
 			similarUsers = getNsimilarUsers(currentUser, timestamp);
 			double k = computeNormalizer(currentUser, similarUsers);
-
+			System.out.println(unrratedMovies.size()+" "+votedItemsForUser.getMovies().size());
 			for (Movie movie : unrratedMovies) {
+				currentMovieID = movie.getMovieId();
 				double prediction = getMeanVoteForUser(currentUser, votedItemsForUser);
 				Configuration conf = getConf();
 				JobConf job = new JobConf(conf, MyJob.class);
@@ -108,11 +114,9 @@ public class MyJob extends Configured implements Tool {
 				job.setOutputValueClass(Text.class);
 				job.set("key.value.separator.in.input.line", ",");
 				JobClient.runJob(job);
-
-				prediction += k * 1;
-				if (prediction > 0)
-					recs.add(new Recommendation(currentUser,
-							movie.getMovieId(), prediction));
+				prediction += 1;
+				if (prediction > 0)	recs.add(new Recommendation(currentUser, currentMovieID, prediction));
+				System.out.println("done");
 			}
 		} catch (SQLException ex) {
 			System.err.println(ex.getMessage());
@@ -122,8 +126,8 @@ public class MyJob extends Configured implements Tool {
 	}
 
 	public static void main(String[] args) throws Exception {
-		int res = ToolRunner.run(new Configuration(), new MyJob(3855,"2010-12-21 20:00:00"), args);
-		System.exit(res);
+		int res = ToolRunner.run(new Configuration(), new MyJob(2,"2010-12-21 20:00:00"), args);
+	//	System.exit(res);
 	}
 	
 	
@@ -139,6 +143,8 @@ public class MyJob extends Configured implements Tool {
 
 	public static MoviesAndRatings getVotedItemsForUser(int userId, String theDay)
 			throws SQLException {
+		
+		System.out.println("getVotedItemsForUSer()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -173,6 +179,7 @@ public class MyJob extends Configured implements Tool {
 	}
 
 	public static List<User> getUsers() throws SQLException {
+		System.out.println("getUsers()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -190,6 +197,7 @@ public class MyJob extends Configured implements Tool {
 	}
 
 	public static List<Movie> getMovies() throws SQLException {
+		System.out.println("getMovies()");
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -304,7 +312,7 @@ public class MyJob extends Configured implements Tool {
 
 	public static double computeNormalizer(int userId, List<User> similarUsers)
 			throws SQLException {
-
+		System.out.println("in normalizer");
 		double result = 0;
 		MoviesAndRatings mar1 = getVotedItemsForUser(userId, timestamp);
 		for (User user : similarUsers) {
