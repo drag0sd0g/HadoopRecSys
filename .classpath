@@ -7,5 +7,10 @@
 	<classpathentry kind="lib" path="lib/hadoop-0.20.2-core.jar"/>
 	<classpathentry kind="lib" path="lib/joda-time-1.6.2.jar"/>
 	<classpathentry kind="lib" path="lib/mysql-connector-java-3.1.14-bin.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-common-0.21.0.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-hdfs-0.21.0.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-hdfs-ant-0.21.0.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-mapred-0.21.0.jar"/>
+	<classpathentry kind="lib" path="lib/hadoop-mapred-tools-0.21.0.jar"/>
 	<classpathentry kind="output" path="bin"/>
 </classpath>

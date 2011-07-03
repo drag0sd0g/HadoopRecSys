@@ -9,7 +9,15 @@ import java.util.*;
 import org.apache.hadoop.conf.*;
 import org.apache.hadoop.fs.*;
 import org.apache.hadoop.io.*;
-import org.apache.hadoop.mapred.*;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.Reducer.Context;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.KeyValueTextInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.*;
 import org.joda.time.DateTime;
 import org.joda.time.DateTimeZone;
@@ -57,10 +65,10 @@ public class MyJob extends Configured implements Tool {
 	}
 	
 	// Mapper
-	public static class MapClass extends MapReduceBase implements
-			Mapper<Text, Text, IntWritable, DoubleWritable> {
-		public void map(Text key, Text value, OutputCollector<IntWritable, DoubleWritable> output, Reporter reporter)
-				throws IOException {
+	public static class MapClass extends Mapper<LongWritable, LongWritable, IntWritable, DoubleWritable> {
+		public void map(Text key, Text value, Context context)
+		throws IOException, InterruptedException
+ {
 			    int newKey = Integer.parseInt(key.toString());
 				User sim = findUserById(similarUsers, newKey);
 				if(sim!=null){
@@ -71,21 +79,21 @@ public class MyJob extends Configured implements Tool {
 				}catch(SQLException ex){
 					System.out.println(ex.getMessage());
 				}
-			output.collect(new IntWritable(newKey), new DoubleWritable(intermed));
+			context.write(new IntWritable(newKey), new DoubleWritable(intermed));
 				}
 		}
 	}
 
 	// Reducer
-	public static class Reduce extends MapReduceBase implements
-			Reducer<IntWritable, DoubleWritable, IntWritable, DoubleWritable> {
-		public void reduce(IntWritable key, Iterator<DoubleWritable> values, OutputCollector<IntWritable, DoubleWritable> output, Reporter reporter)
-				throws IOException {
+	public static class Reduce extends Reducer<IntWritable, DoubleWritable, IntWritable, DoubleWritable> {
+		public void reduce(IntWritable key, Iterable<DoubleWritable> values, Context context)
+		throws IOException, InterruptedException {
+			Iterator<DoubleWritable> theIterator = values.iterator(); 
 			double sum = 0;
-			while (values.hasNext()) {
-					sum += values.next().get();
+			while (theIterator.hasNext()) {
+					sum += theIterator.next().get();
 			}
-			output.collect(key, new DoubleWritable(sum));
+			context.write(key, new DoubleWritable(sum));
 		}
 	}
 
@@ -106,7 +114,8 @@ public class MyJob extends Configured implements Tool {
 				conf.addResource(new Path("conf/core-site.xml"));
 				conf.addResource(new Path("conf/hdfs-site.xml"));
 				conf.reloadConfiguration();				
-				JobConf job = new JobConf(conf, MyJob.class);
+				Job job = new Job(conf, "MyJob");
+				job.setJarByClass(MyJob.class);
 				Path in = new Path("/home/dragos/users.csv");
 				Path out = new Path("/home/dragos/myOutput");
 				FileInputFormat.setInputPaths(job, in);
@@ -114,15 +123,17 @@ public class MyJob extends Configured implements Tool {
 				job.setJobName("RecSysJob");
 				job.setMapperClass(MapClass.class);
 				job.setReducerClass(Reduce.class);
-				job.setInputFormat(KeyValueTextInputFormat.class);
-				job.setOutputFormat(TextOutputFormat.class);
+				job.setInputFormatClass(KeyValueTextInputFormat.class);
+				job.setOutputFormatClass(TextOutputFormat.class);
 				job.setOutputKeyClass(IntWritable.class);
 				job.setOutputValueClass(DoubleWritable.class);
-				job.set("key.value.separator.in.input.line", ",");
-				JobClient.runJob(job);
+			//	job.set("key.value.separator.in.input.line", ",");
+		//		JobClient.runJob(job);
 				prediction += 1;
 				if (prediction > 0)	recs.add(new Recommendation(currentUser, currentMovieID, prediction));
 				System.out.println("done");
+				System.exit(job.waitForCompletion(true)?0:1);
+
 			}
 		} catch (SQLException ex) {
 			System.err.println(ex.getMessage());
