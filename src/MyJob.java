@@ -23,6 +23,8 @@ public class MyJob extends Configured implements Tool {
 	private static List<Movie> movies = null;
 	private static List<User> users = null;
 	private static List<User> similarUsers=null;
+	private static List<Movie> unrratedMovies = null;
+	private static MoviesAndRatings votedItemsForUser;
 	
 	public MyJob(int userId, String datetime) {
 		currentUser = userId;
@@ -82,27 +84,32 @@ public class MyJob extends Configured implements Tool {
 	public int run(String[] args) throws Exception {
 		List<Recommendation> recs = new LinkedList<Recommendation>();
 		try {
-			this.movies = getMovies();
-			this.users = getUsers();
-			MoviesAndRatings votedItemsForUser = getVotedItemsForUser(
-					currentUser, timestamp);
-			List<Movie> unrrated = votedItemsForUser.getUnratedMovies();
-			List<User> similarUsers = getNsimilarUsers(currentUser, timestamp);
+			movies = getMovies();
+			users = getUsers();
+			votedItemsForUser = getVotedItemsForUser(currentUser, timestamp);
+			unrratedMovies = votedItemsForUser.getUnratedMovies();
+			similarUsers = getNsimilarUsers(currentUser, timestamp);
 			double k = computeNormalizer(currentUser, similarUsers);
 
-			for (Movie movie : unrrated) {
-				double prediction = 1;
-				double intermed = 0;
-				for (int g=0;g<similarUsers.size();g++) {
-					User sim = similarUsers.get(g);
-					MoviesAndRatings marSim = getVotedItemsForUser(
-							sim.getUserID(), timestamp);
-					intermed += similarity(currentUser, sim.getUserID(),
-							votedItemsForUser, marSim)
-							* (getVoteOfUserForItem(sim.getUserID(),
-									movie.getMovieId(), marSim));
-				}
-				prediction = k * intermed;
+			for (Movie movie : unrratedMovies) {
+				double prediction = getMeanVoteForUser(currentUser, votedItemsForUser);
+				Configuration conf = getConf();
+				JobConf job = new JobConf(conf, MyJob.class);
+				Path in = new Path("/home/dragos/users.csv");
+				Path out = new Path("/home/dragos/myOutput");
+				FileInputFormat.setInputPaths(job, in);
+				FileOutputFormat.setOutputPath(job, out);
+				job.setJobName("RecSysJob");
+				job.setMapperClass(MapClass.class);
+				job.setReducerClass(Reduce.class);
+				job.setInputFormat(KeyValueTextInputFormat.class);
+				job.setOutputFormat(TextOutputFormat.class);
+				job.setOutputKeyClass(Text.class);
+				job.setOutputValueClass(Text.class);
+				job.set("key.value.separator.in.input.line", ",");
+				JobClient.runJob(job);
+
+				prediction += k * 1;
 				if (prediction > 0)
 					recs.add(new Recommendation(currentUser,
 							movie.getMovieId(), prediction));
@@ -110,22 +117,7 @@ public class MyJob extends Configured implements Tool {
 		} catch (SQLException ex) {
 			System.err.println(ex.getMessage());
 		} 
-		
-		Configuration conf = getConf();
-		JobConf job = new JobConf(conf, MyJob.class);
-		Path in = new Path("/home/dragos/users.csv");
-		Path out = new Path("/home/dragos/myOutput");
-		FileInputFormat.setInputPaths(job, in);
-		FileOutputFormat.setOutputPath(job, out);
-		job.setJobName("RecSysJob");
-		job.setMapperClass(MapClass.class);
-		job.setReducerClass(Reduce.class);
-		job.setInputFormat(KeyValueTextInputFormat.class);
-		job.setOutputFormat(TextOutputFormat.class);
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(Text.class);
-		job.set("key.value.separator.in.input.line", ",");
-		JobClient.runJob(job);
+
 		return 0;
 	}
 
@@ -145,7 +137,7 @@ public class MyJob extends Configured implements Tool {
 				username, password);
 	}
 
-	public MoviesAndRatings getVotedItemsForUser(int userId, String theDay)
+	public static MoviesAndRatings getVotedItemsForUser(int userId, String theDay)
 			throws SQLException {
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
@@ -168,7 +160,7 @@ public class MyJob extends Configured implements Tool {
 			}
 		}
 		List<Movie> unrratedMovies = new LinkedList<Movie>();
-		List<Movie> allMovies = this.movies;
+		List<Movie> allMovies = movies;
 		if (allMovies == null)
 			allMovies = getMovies();
 		for (Movie mo : allMovies) {
@@ -180,7 +172,7 @@ public class MyJob extends Configured implements Tool {
 		return new MoviesAndRatings(userId, movies, ratings, unrratedMovies);
 	}
 
-	public List<User> getUsers() throws SQLException {
+	public static List<User> getUsers() throws SQLException {
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -197,7 +189,7 @@ public class MyJob extends Configured implements Tool {
 		return movies;
 	}
 
-	public List<Movie> getMovies() throws SQLException {
+	public static List<Movie> getMovies() throws SQLException {
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -216,8 +208,7 @@ public class MyJob extends Configured implements Tool {
 		return movies;
 	}
 
-	public int getVoteOfUserForItem(int userId, int movieId,
-			MoviesAndRatings mar) {
+	public static int getVoteOfUserForItem(int userId, int movieId,	MoviesAndRatings mar) {
 		List<Movie> movies = mar.getMovies();
 		List<Integer> ratings = mar.getRatings();
 		for (int i = 0; i < movies.size(); i++) {
@@ -228,8 +219,7 @@ public class MyJob extends Configured implements Tool {
 		return -1;
 	}
 
-	public double getMeanVoteForUser(int userId,
-			MoviesAndRatings votedItemsForUser) {
+	public static double getMeanVoteForUser(int userId,	MoviesAndRatings votedItemsForUser) {
 		double result = 0;
 		List<Movie> movies = votedItemsForUser.getMovies();
 		List<Integer> ratings = votedItemsForUser.getRatings();
@@ -239,13 +229,12 @@ public class MyJob extends Configured implements Tool {
 		return result / ratings.size();
 	}
 
-	public double similarity(int userId1, int userId2, MoviesAndRatings mar1,
+	public static double similarity(int userId1, int userId2, MoviesAndRatings mar1,
 			MoviesAndRatings mar2) throws SQLException {
 		double result = 0;
 		List<Movie> list1 = mar1.getMovies();
 		List<Movie> list2 = mar2.getMovies();
-		if (this.movies == null)
-			this.movies = getMovies();
+		if (movies == null)	movies = getMovies();
 		List<Movie> commonMovies = new LinkedList<Movie>();
 		for (Movie m1 : list1) {
 			for (Movie m2 : list2) {
@@ -279,16 +268,16 @@ public class MyJob extends Configured implements Tool {
 		return result;
 	}
 
-	public List<User> getNsimilarUsers(int userId, String theDay)
+	public static List<User> getNsimilarUsers(int userId, String theDay)
 			throws SQLException {
 		List<User> result = new LinkedList<User>();
-		List<User> users = this.users;
-		if (users == null)
-			users = getUsers();
+		List<User> zeUsers = users;
+		if (zeUsers == null)
+			zeUsers = getUsers();
 		List<UserAndWeight> usrwgh = new LinkedList<UserAndWeight>();
 		MoviesAndRatings mar1 = getVotedItemsForUser(userId, theDay);
-		for (int o=0; o<users.size();o++) {
-			User u = users.get(o);
+		for (int o=0; o<zeUsers.size();o++) {
+			User u = zeUsers.get(o);
 			if (u.getUserID() != userId) {
 				MoviesAndRatings mar2 = getVotedItemsForUser(u.getUserID(),
 						theDay);
@@ -313,7 +302,7 @@ public class MyJob extends Configured implements Tool {
 		return result;
 	}
 
-	public double computeNormalizer(int userId, List<User> similarUsers)
+	public static double computeNormalizer(int userId, List<User> similarUsers)
 			throws SQLException {
 
 		double result = 0;
@@ -327,7 +316,7 @@ public class MyJob extends Configured implements Tool {
 		return (1 / result);
 	}
 
-	public String getDayOfWeek(String datetime) {
+	public static String getDayOfWeek(String datetime) {
 		String[] firstSplit = datetime.split("[ ]");
 		String theDate = firstSplit[0];
 		String theTime = firstSplit[1];
