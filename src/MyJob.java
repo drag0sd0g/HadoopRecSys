@@ -15,7 +15,7 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.Reducer.Context;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
-import org.apache.hadoop.mapreduce.lib.input.KeyValueTextInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.*;
@@ -30,11 +30,11 @@ public class MyJob extends Configured implements Tool {
 	private static final int topN = 5;
 	private static List<Movie> movies = null;
 	private static List<User> users = null;
-	private static List<User> similarUsers=null;
+	private static List<User> similarUsers = null;
 	private static List<Movie> unrratedMovies = null;
 	private static MoviesAndRatings votedItemsForUser;
 	private static int currentMovieID;
-	
+
 	public MyJob(int userId, String datetime) {
 		currentUser = userId;
 		timestamp = datetime;
@@ -63,35 +63,44 @@ public class MyJob extends Configured implements Tool {
 			e.printStackTrace();
 		}
 	}
-	
+
 	// Mapper
-	public static class MapClass extends Mapper<LongWritable, LongWritable, IntWritable, DoubleWritable> {
-		public void map(Text key, Text value, Context context)
-		throws IOException, InterruptedException
- {
-			    int newKey = Integer.parseInt(key.toString());
-				User sim = findUserById(similarUsers, newKey);
-				if(sim!=null){
+	public static class MapClass extends
+			Mapper<LongWritable, Text, LongWritable, Text> {
+		public void map(LongWritable key, Text value, Context context)
+				throws IOException, InterruptedException {
+			String[] line = value.toString().split(",");
+			int newKey = Integer.parseInt(line[0]);
+			System.out.println(newKey+" "+line[1]);
+			User sim = findUserById(similarUsers, newKey);
+			if (sim != null) {
 				double intermed = 0;
-				try{
-				MoviesAndRatings marSim = getVotedItemsForUser(sim.getUserID(), timestamp);
-				intermed = similarity(currentUser, sim.getUserID(),votedItemsForUser, marSim)*(getVoteOfUserForItem(sim.getUserID(),	currentMovieID, marSim));
-				}catch(SQLException ex){
-					System.out.println(ex.getMessage());
+				try {
+					MoviesAndRatings marSim = getVotedItemsForUser(
+							sim.getUserID(), timestamp);
+					intermed = similarity(currentUser, sim.getUserID(),
+							votedItemsForUser, marSim)
+							* (getVoteOfUserForItem(sim.getUserID(),
+									currentMovieID, marSim));
 				}
-			context.write(new IntWritable(newKey), new DoubleWritable(intermed));
-				}
+				catch (Exception ex) {
+					System.out.println("!>!>!>!>!>!>!>!"+ex.getMessage());
+				} 
+				context.write(new LongWritable(newKey), new Text(
+						intermed+""));
+			}
 		}
 	}
 
 	// Reducer
-	public static class Reduce extends Reducer<IntWritable, DoubleWritable, IntWritable, DoubleWritable> {
-		public void reduce(IntWritable key, Iterable<DoubleWritable> values, Context context)
-		throws IOException, InterruptedException {
-			Iterator<DoubleWritable> theIterator = values.iterator(); 
+	public static class Reduce extends
+			Reducer<LongWritable, Text, LongWritable, DoubleWritable> {
+		public void reduce(LongWritable key, Iterable<Text> values,
+				Context context) throws IOException, InterruptedException {
+			Iterator<Text> theIterator = values.iterator();
 			double sum = 0;
 			while (theIterator.hasNext()) {
-					sum += theIterator.next().get();
+				sum += Double.parseDouble(theIterator.next().toString());
 			}
 			context.write(key, new DoubleWritable(sum));
 		}
@@ -106,49 +115,45 @@ public class MyJob extends Configured implements Tool {
 			unrratedMovies = votedItemsForUser.getUnratedMovies();
 			similarUsers = getNsimilarUsers(currentUser, timestamp);
 			double k = computeNormalizer(currentUser, similarUsers);
-			System.out.println(unrratedMovies.size()+" "+votedItemsForUser.getMovies().size());
+			System.out.println(unrratedMovies.size() + " "
+					+ votedItemsForUser.getMovies().size());
 			for (Movie movie : unrratedMovies) {
+				System.out.println("exec");
 				currentMovieID = movie.getMovieId();
-				double prediction = getMeanVoteForUser(currentUser, votedItemsForUser);
+				double prediction = getMeanVoteForUser(currentUser,
+						votedItemsForUser);
 				Configuration conf = getConf();
 				conf.addResource(new Path("conf/core-site.xml"));
 				conf.addResource(new Path("conf/hdfs-site.xml"));
-				conf.reloadConfiguration();				
+				conf.reloadConfiguration();
 				Job job = new Job(conf, "MyJob");
 				job.setJarByClass(MyJob.class);
-				Path in = new Path("/home/dragos/users.csv");
+				Path in = new Path("/home/dragos/userz.csv");
 				Path out = new Path("/home/dragos/myOutput");
 				FileInputFormat.setInputPaths(job, in);
 				FileOutputFormat.setOutputPath(job, out);
-				job.setJobName("RecSysJob");
 				job.setMapperClass(MapClass.class);
 				job.setReducerClass(Reduce.class);
-				job.setInputFormatClass(KeyValueTextInputFormat.class);
-				job.setOutputFormatClass(TextOutputFormat.class);
-				job.setOutputKeyClass(IntWritable.class);
-				job.setOutputValueClass(DoubleWritable.class);
-			//	job.set("key.value.separator.in.input.line", ",");
-		//		JobClient.runJob(job);
 				prediction += 1;
-				if (prediction > 0)	recs.add(new Recommendation(currentUser, currentMovieID, prediction));
-				System.out.println("done");
-				System.exit(job.waitForCompletion(true)?0:1);
-
+				if (prediction > 0)
+					recs.add(new Recommendation(currentUser, currentMovieID,
+							prediction));
+				System.exit(job.waitForCompletion(true) ? 0 : 1);
+				System.out.println("done?");
 			}
 		} catch (SQLException ex) {
 			System.err.println(ex.getMessage());
-		} 
+		}
 
 		return 0;
 	}
 
 	public static void main(String[] args) throws Exception {
-		int res = ToolRunner.run(new Configuration(), new MyJob(2,"2010-12-21 20:00:00"), args);
-	//	System.exit(res);
+		int res = ToolRunner.run(new Configuration(), new MyJob(1,
+				"2011-07-15 20:00:00"), args);
+		System.exit(res);
 	}
-	
-	
-	
+
 	public static Connection getConnection(String driver,
 			String connectionString, String username, String password)
 			throws SQLException, InstantiationException,
@@ -158,8 +163,8 @@ public class MyJob extends Configured implements Tool {
 				username, password);
 	}
 
-	public static MoviesAndRatings getVotedItemsForUser(int userId, String theDay)
-			throws SQLException {
+	public static MoviesAndRatings getVotedItemsForUser(int userId,
+			String theDay) throws SQLException {
 		Statement st = conn.createStatement(
 				java.sql.ResultSet.TYPE_FORWARD_ONLY,
 				java.sql.ResultSet.CONCUR_READ_ONLY);
@@ -190,7 +195,8 @@ public class MyJob extends Configured implements Tool {
 		}
 		films.close();
 		st.close();
-		return new MoviesAndRatings(userId, allRatedAtTime, ratings, unrratedMovies);
+		return new MoviesAndRatings(userId, allRatedAtTime, ratings,
+				unrratedMovies);
 	}
 
 	public static List<User> getUsers() throws SQLException {
@@ -229,7 +235,8 @@ public class MyJob extends Configured implements Tool {
 		return movies;
 	}
 
-	public static int getVoteOfUserForItem(int userId, int movieId,	MoviesAndRatings mar) {
+	public static int getVoteOfUserForItem(int userId, int movieId,
+			MoviesAndRatings mar) {
 		List<Movie> votedmovies = mar.getMovies();
 		List<Integer> ratings = mar.getRatings();
 		for (int i = 0; i < votedmovies.size(); i++) {
@@ -240,7 +247,8 @@ public class MyJob extends Configured implements Tool {
 		return -1;
 	}
 
-	public static double getMeanVoteForUser(int userId,	MoviesAndRatings votedItemsForUser) {
+	public static double getMeanVoteForUser(int userId,
+			MoviesAndRatings votedItemsForUser) {
 		double result = 0;
 		List<Movie> movies = votedItemsForUser.getMovies();
 		List<Integer> ratings = votedItemsForUser.getRatings();
@@ -250,12 +258,13 @@ public class MyJob extends Configured implements Tool {
 		return result / ratings.size();
 	}
 
-	public static double similarity(int userId1, int userId2, MoviesAndRatings mar1,
-			MoviesAndRatings mar2) throws SQLException {
+	public static double similarity(int userId1, int userId2,
+			MoviesAndRatings mar1, MoviesAndRatings mar2) throws SQLException {
 		double result = 0;
 		List<Movie> list1 = mar1.getMovies();
 		List<Movie> list2 = mar2.getMovies();
-		if (movies == null)	movies = getMovies();
+		if (movies == null)
+			movies = getMovies();
 		List<Movie> commonMovies = new LinkedList<Movie>();
 		for (Movie m1 : list1) {
 			for (Movie m2 : list2) {
@@ -297,7 +306,7 @@ public class MyJob extends Configured implements Tool {
 			zeUsers = getUsers();
 		List<UserAndWeight> usrwgh = new LinkedList<UserAndWeight>();
 		MoviesAndRatings mar1 = getVotedItemsForUser(userId, theDay);
-		for (int o=0; o<zeUsers.size();o++) {
+		for (int o = 0; o < zeUsers.size(); o++) {
 			User u = zeUsers.get(o);
 			if (u.getUserID() != userId) {
 				MoviesAndRatings mar2 = getVotedItemsForUser(u.getUserID(),
@@ -359,10 +368,13 @@ public class MyJob extends Configured implements Tool {
 		else
 			return "weekday";
 	}
-	
-	public static User findUserById(List<User> theUsers,int theKey){
-		for(User u:theUsers){
-			if (u.getUserID()==theKey) return u;
+
+	public static User findUserById(List<User> theUsers, int theKey) {
+		if (theUsers != null) {
+			for (User u : theUsers) {
+				if (u.getUserID() == theKey)
+					return u;
+			}
 		}
 		return null;
 	}
